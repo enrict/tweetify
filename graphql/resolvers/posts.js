@@ -1,6 +1,6 @@
 const Post = require("../../models/Post");
 const checkAuth = require("../../utils/checkAuth");
-const { AuthenticationError } = require("apollo-server");
+const { AuthenticationError, UserInputError } = require("apollo-server");
 
 module.exports = {
   Query: {
@@ -28,6 +28,10 @@ module.exports = {
   Mutation: {
     async createPost(_, { body }, context) {
       const user = checkAuth(context);
+
+      if (args.body.trim() === "") {
+        throw new Error("body must not be empty");
+      }
       console.log(user);
       const newPost = new Post({
         body,
@@ -37,6 +41,9 @@ module.exports = {
       });
 
       const post = await newPost.save();
+      context.pubsub.publish("NEW_POST", {
+        newPost: post,
+      });
       return post;
     },
     async deletePost(_, { postId }, context) {
@@ -52,6 +59,31 @@ module.exports = {
       } catch (error) {
         throw new Error(error);
       }
+    },
+    async likePost(_, { postId }, context) {
+      const { username } = checkAuth(context);
+
+      const post = await Post.findById(postId);
+      if (post) {
+        if (post.likes.find((like) => like.username === username)) {
+          post.likes = post.likes.filter((like) => like.username !== username);
+        } else {
+          post.likes.push({
+            username,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        await post.save();
+        return post;
+      } else {
+        throw new UserInputError("post not found");
+      }
+    },
+  },
+
+  Subscription: {
+    newPost: {
+      subscribe: (_, __, { pubsub }) => pubsub.asyncIterator("NEW_POST"),
     },
   },
 };
